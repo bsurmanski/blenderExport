@@ -7,7 +7,7 @@ import struct
 bl_info={
         "name": "Brandon Surmanski MDL Format",
         "author": "Brandon Surmanski",
-        "blender": (2,5,8),
+        "blender": (2,6,5),
         "api": 35622,
         "location": "File > Export",
         "description":("Export MDL mesh"),
@@ -25,38 +25,23 @@ HEADER:
     3 byte: magic number (MDL)
     1 byte: version number (2)
     4 byte: number of verts
-    4 byte: number of edges
     4 byte: number of faces
-    4 byte: number of unique texture vertices (UVs)
-    1 byte: format
-    11 byte: padding
+    20 byte: padding
     
 VERT:
-    2 byte: incident edge (index)
-    2 byte: incident face (index)
     12 byte: position (3 * 4 byte float)
-    
-EDGE:
-    4 byte: verts (2 * 2 byte index)
-    4 byte: faces (2 * 2 byte index)
-    8 byte: winged edges [4 * 2 byte index](aprev, anext, bprev, bnext)
+    12 byte: normal (3 * 4 byte float)
+    4 byte: uv coordinate (2 * 2 byte) (normalized from 0 to 65535)
+    2 byte: material
+    2 byte: padding
     
 FACE:
-    2 byte: incident edge (index)
-    6 byte: uv indices
-    6 byte: normal (3 * (2 byte) coordinate (each component normalized for -32768 to 32767)
-    2 byte: padding
-                    
-UV:
-    2 byte: vertice index
-    4 byte: uv coordinate (2 * 2 byte) (normalized from 0 to 65535)
-    2 byte: padding
+    6 byte: vertex indices
     
     
 MDL:
     HEADER,
     VERTS,
-    EDGES,
     FACES
 """
 
@@ -83,70 +68,14 @@ def float_to_short(val):
         return twos_cmpl(-2**15)
     return twos_cmpl(int(round(val * 2**15)))
 
-class Edge():
-    def __init__(self, mdl, edge):
-        self.mdl = mdl
-        self.edge = edge
-        verts_tmp = mdl.mesh.edges[edge.index].vertices
-        self.verts = [mdl.mesh.vertices[verts_tmp[0]], mdl.mesh.vertices[verts_tmp[1]]]
-        self.faces = [None, None]
-        self.awing = [None, None]
-        self.bwing = [None, None]
-
-    def add_face(self, face):
-        ekeys = face.edge_keys
-        found = 0
-        for i in range(0, len(ekeys)):
-
-            if self.verts[0].index in ekeys[i] and self.verts[1].index in ekeys[i]:
-
-                found += 1
-
-                if self.verts[0].index in ekeys[i-1]: #left face
-                    self.faces[0] = face
-                    self.awing[0] = self.mdl.edgeDict[ekeys[i-1]]
-                    self.bwing[1] = self.mdl.edgeDict[ekeys[(i+1)%len(ekeys)]]
-
-                elif self.verts[1].index in ekeys[i-1]: #right face
-                    self.faces[1] = face
-                    self.awing[1] = self.mdl.edgeDict[ekeys[(i+1)%len(ekeys)]]
-                    self.bwing[0] = self.mdl.edgeDict[ekeys[i-1]]
-
-                else:
-                    raise Exception("Face is neither the left or right of the edge")
-
-        if found != 1:
-            raise Exception("Could not find adjacent faces")
-            
-    # done at the end, if one of the wings is None, that means the mesh is not
-    # a closed boundary surface. Fix this problem by wrapping the face around the 
-    # corner
-    def fix_wings(self):
-        if self.awing[0] == None:
-            self.awing[0] = self.edge.index
-        if self.awing[1] == None:
-            self.awing[1] = self.edge.index
-            
-        if self.bwing[0] == None:
-            self.bwing[0] = self.edge.index
-        if self.bwing[1] == None:
-            self.bwing[1] = self.edge.index
-            
-
-
 class Vert():
     def __init__(self, mdl, vert):
         self.mdl = mdl
-        self.incidentEdge = None
         self.vert = vert
-
-    def add_edge(self, edge):
-        self.incidentEdge = edge
 
 class Face():
     def __init__(self, mdl, face):
         self.mdl = mdl
-        self.incidentEdge = None
         self.face = face
         tnorm = mdl.tmat * face.normal
         self.normal = [float_to_short(normi) for normi in tnorm]
@@ -156,9 +85,7 @@ class Face():
             self.uvs = list([mdl.addUV(face.vertices[i], self.uvs[i]) for i in range(0,3)]) 
         else:
             self.uvs = list([0] * 3)
-            
-    def add_edge(self, edge):
-        self.incidentEdge = edge
+          
        
 
 class MDL(bpy.types.Operator, ExportHelper):
@@ -225,9 +152,9 @@ class MDL(bpy.types.Operator, ExportHelper):
         return self.uvlist.index(entry)
 
     def write_header(self):
-        hfmt = "3sBIIII" + 'x' * 12
-        header = struct.pack(hfmt, b"MDL", 2,
-                    len(self.verts), len(self.edges), len(self.faces), len(self.uvlist))
+        hfmt = "3sBII" + 'x' * 20
+        header = struct.pack(hfmt, b"MDL", 3,
+                    len(self.verts), len(self.faces))
         self.ofile.write(header)
 
     def write_verts(self):
@@ -306,4 +233,4 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-    bpy.ops.export.mdl2('INVOKE_DEFAULT')
+    #bpy.ops.export.mdl2('INVOKE_DEFAULT')
