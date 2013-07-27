@@ -35,7 +35,7 @@ PACK:
         32
     XX byte: packed data
 
-ENT: 
+ENT:
     ENT HEADER: (PACKED TO 16 BYTES)
         2 byte: parent id (zero indexed, if top bit is '1', no parent)
         2 byte: num resources refs
@@ -46,9 +46,6 @@ ENT:
     PAKID * num resource refs
         2 byte: index into PACK array
     xx byte: Resource References (PAKID)
-
-    
-
 
 SCN:
     HEADER,
@@ -77,42 +74,42 @@ class PakList:
                 if obj.type == "MESH":
                     dat = b"" #dat = write_mdl_mesh(
                     self.add(Pak(0x01, "MDL", obj, write_mdl_mesh(obj, None)))
-             
+
                     if obj.active_material:
                         textures = object_textures(obj)
                         for tex in textures:
                             self.add(Pak(0x02, "TGA", tex, b""))
-                
+
                 elif obj.type == "CAMERA":
                     self.add(Pak(0x10, "CAM", obj, b""))
-                
+
                 elif obj.type == "LAMP":
                     self.add(Pak(0x20, "LMP", obj, b""))
-                
+
                 else:
                     print("no know output format for \"", obj.name, "\" of type \"", obj.type, "\". Ignoring")
-              
+
     def list(self):
-        return self.pakList         
-       
+        return self.pakList
+
     def length(self):
         return len(self.pakList)
-        
+
     def add(self, pak):
         self.pakList.append(pak)
-        
+
     def get(self, i):
         return self.pakList[i]
-        
+
     def find(self, obj):
         for pak in self.pakList:
             if pak.obj == obj:
                 return pak
-            
+
     #assumes only meshes use more than one resource; and then only for textures
     def numResources(self, obj):
         return len(self.resourceList(obj))
-    
+
     def resourceList(self, obj):
         lst = []
         lst.append(self.objID(obj))
@@ -122,10 +119,10 @@ class PakList:
             if obj.active_material:
                 textures = object_textures(obj)
                 for tex in textures:
-                    
+
                     lst.append(self.objID(tex))
         return lst
-    
+
     def objID(self, obj):
         cnt = 0
         for pak in self.pakList:
@@ -133,7 +130,7 @@ class PakList:
                 return cnt
             cnt+=1
         return -1
-    
+
 
 
 def count_object_textures(obj):
@@ -147,16 +144,16 @@ def object_textures(obj):
                 seen.append(tex)
     return seen
 
-def write_scn_header(buf, scene, pakList):       
+def write_scn_header(buf, scene, pakList):
     hfmt = "3sBHH8x16s"
-    header = struct.pack(hfmt, 
-                         b"SCN", 
+    header = struct.pack(hfmt,
+                         b"SCN",
                          1,
                          pakList.length(), # count resources objects need (textures/meshs for mesh type)
                          len(scene.objects), # count objects in scene
                          bytes(scene.name, "UTF-8"))
     buf.append(header)
-    
+
 def write_scn_pack(buf, scene, type, id, name, data):
     fmt = "B3sI8x16s"
     pheader = struct.pack(fmt, type, bytes(id, "UTF-8"), len(data), bytes(name, "UTF-8"))
@@ -165,56 +162,56 @@ def write_scn_pack(buf, scene, type, id, name, data):
     pakln = len(pheader) + len(data)
     if (pakln % 16) != 0: #pack to 16 bits
         buf.append(struct.pack("x" * (16 - (pakln % 16))))
-    
+
 def write_scn_packs(buf, scene, pakList):
     for pak in pakList.list(): #TODO not correctly being writen in order
         write_scn_pack(buf, scene, pak.type, pak.id, pak.name, pak.data)
-    
+
 
 def write_scn_ent(buf, scene, pakList, obj, id, parent):
     fmt = "HH3f3f3f"
-    eheader = struct.pack(fmt, 
+    eheader = struct.pack(fmt,
                           parent,
                           pakList.numResources(obj),
                           obj.location[0], obj.location[1], obj.location[2],
                           obj.rotation_quaternion[1], obj.rotation_quaternion[2], obj.rotation_quaternion[3],
                           obj.scale[0], obj.scale[1], obj.scale[2])
     buf.append(eheader)
-    
+
     resref = pakList.resourceList(obj)
     for res in resref:
         buf.append(struct.pack("H", res))
-    
+
     #
     #pack to 16 bits after each ent entry
     #
     entln = len(eheader) + len(resref) * 2
-    if (entln % 16) != 0: 
+    if (entln % 16) != 0:
         buf.append(struct.pack("x" * (16 - (entln % 16))))
-    
+
     parent = id
     for objs in obj.children:
         id += 1
         write_scn_ent(buf, scene, pakList, id, parent) #TODO parent ID
     id += 1
     return id
-    
+
 
 def write_scn_ents(buf, scene, pakList):
     objs = []
     for obj in scene.objects: # build list of roots
         if not obj.parent:
             objs.append(obj)
-    
+
     cnt = 0
     for obj in objs:
         cnt = write_scn_ent(buf, scene, pakList, obj, cnt, 0xffff)
-        
-            
+
+
 def write_scn_data(buf, scene, pakList):
     write_scn_packs(buf, scene, pakList)
     write_scn_ents(buf, scene, pakList)
-    
+
 def write_scn_scene(context, settings):
     buf = []
     pakList = PakList(context.scene)

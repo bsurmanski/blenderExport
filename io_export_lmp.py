@@ -10,8 +10,8 @@ LMP file format export
 Requirements:
     spec lamp type (point, sun, spot, hemi, area, ambient)
     spec lamp color (spec, diffuse)
-    spec lamp 
-     
+    spec lamp
+
     Point/Spot:
         spec lamp falloff (? maybe)
 
