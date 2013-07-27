@@ -1,186 +1,309 @@
 import bpy
+from bpy_extras.io_utils import ExportHelper
 from mathutils import *
 from math import *
 import struct
 
-def write_mdl_data(context, filepath):
-        print("Calculating Model Data...")
+bl_info={
+        "name": "Brandon Surmanski MDL Format",
+        "author": "Brandon Surmanski",
+        "blender": (2,5,8),
+        "api": 35622,
+        "location": "File > Export",
+        "description":("Export MDL mesh"),
+        "warning":"",
+        "wiki_url":"",
+        "tracker_url":"",
+        "support": 'NONE',
+        "category": "Export"
+        }
         
-        objects = bpy.data.objects
-        faces = 0
-        num_verts = 0
-        
-        for obj in objects:
-                if obj.type == "MESH": #for all meshes
-                        faces += len(obj.data.faces)
-                        num_verts += len(obj.data.vertices)
-                        
-        num_actions = len(bpy.data.actions) #get num actions
-        
-        f = open(filepath, 'w')
-        f.write("MODL")
-        f.write("{0:4d} {1:6d} {2:6d}".format(num_actions, faces, num_verts)+"{0:c}".format(0)*4) # file header
-        write_face_vert_relations (objects, f)    
-        write_action_data(objects, f)
-        write_static_meshes(objects,f)
-        f.close()
+MDL_FMT = 2
 
-        return {'FINISHED'}
+"""
+HEADER:
+    3 byte: magic number (MDL)
+    1 byte: version number (2)
+    4 byte: number of verts
+    4 byte: number of edges
+    4 byte: number of faces
+    4 byte: number of unique texture vertices (UVs)
+    1 byte: format
+    11 byte: padding
     
-def write_action_data(objects, f):
-    for actions in bpy.data.actions: # for all actions 
-        num_frames = int(actions.frame_range[1] - actions.frame_range[0]) #get num frames for action
-        f.write("ACTN " + actions.name + "{0:4d}".format(num_frames) + "{0:c}".format(0)*4) #write action header
-        for frame in range (int(actions.frame_range[0]), int(actions.frame_range[1])):
-            write_frame_data (objects, actions, frame, f) #write each frame of the action
-
-def write_static_meshes(objects, f):
-    f.write("MESH ")
-    for obj in objects:
-        if obj.type == "MESH" and not obj.parent:
-            obj_matrix = obj.rotation_euler.to_matrix()*obj.scale[0]
-            for verts in obj.data.vertices:
-                write_vertex((verts.co + obj.location)*obj_matrix, f)
-
-def write_face_vert_relations (objects, f):
-        f.write("FACE ") # face index
-        faceSum = 0
-        for obj in objects:
-                if obj.type == "MESH": #for all meshes
-                    for faces in obj.data.faces:
-                        for indices in faces.vertices:
-                                #f.write("{0:2c}".format(indices+faceSum))
-                                f.write(str(indices+faceSum))
-                                f.write(" ")
-                        f.write(chr(0)*2) #write 2 null bytes
-                    faceSum += len (obj.data.faces) # for multiple meshes, offset faces
+VERT:
+    2 byte: incident edge (index)
+    2 byte: incident face (index)
+    12 byte: position (3 * 4 byte float)
     
+EDGE:
+    4 byte: verts (2 * 2 byte index)
+    4 byte: faces (2 * 2 byte index)
+    8 byte: winged edges [4 * 2 byte index](aprev, anext, bprev, bnext)
+    
+FACE:
+    2 byte: incident edge (index)
+    6 byte: uv indices
+    6 byte: normal (3 * (2 byte) coordinate (each component normalized for -32768 to 32767)
+    2 byte: padding
+                    
+UV:
+    2 byte: vertice index
+    4 byte: uv coordinate (2 * 2 byte) (normalized from 0 to 65535)
+    2 byte: padding
+    
+    
+MDL:
+    HEADER,
+    VERTS,
+    EDGES,
+    FACES
+"""
 
-def write_frame_data(objects, action, frame, f):
-        f.write("FRME ") #write magic number
-        for obj in objects:
-                if obj.type == "MESH": #for all meshes
-                    object_matrix = Matrix()#obj.matrix_local # MODIFY SO GETS OBJECT MOVEMENT, NOT JUST STATIC MATRIX
-                    if obj.parent and obj.parent.type == "ARMATURE":
-                     arm = obj.find_armature() #find armature
-                     arm_matrix = get_armature_matrix(arm) # BUGGY!!!
-                     bone_matrices = dict()
-                     for bones in arm.data.bones: 
-                                boneParent = None
-                                if bones.parent:
-                                        boneParent = bones.parent.name
-                                bone_matrices[bones.name] = get_bone_matrix(action, frame, arm, bones.name, bone_matrices.get(boneParent))
-                     
-                     vertexGroups = list()
-                     for groups in obj.vertex_groups: #get vertex groups in obj
-                                vertexGroups.append(groups.name)
-                                                            
-                     for verts in obj.data.vertices:
-                            totWeight = 0
-                            modifiedVert = Vector()
-                            for groups in verts.groups:
-                                totWeight += groups.weight
-                                modifiedVert += groups.weight*verts.co*object_matrix*bone_matrices[vertexGroups[groups.group]]#*arm_matrix
-                            modifiedVert /= totWeight
-                            write_vertex(modifiedVert, f)     
-                             
-                                
-def write_vertex(vertex, f):
-        for i in range(0,3):
-             f.write(str(vertex[i]))
-             f.write(" ")
-        f.write(chr(0))
-
-
-def get_armature_matrix(armature):
-    return armature.matrix_basis
-
-def get_bone_matrix(action, frame, armature, bone, parent_bone_matrix):
+def extend(lst, sz):
+    for i in range(0, sz):
+        lst += [None]
         
-        if not parent_bone_matrix: #HACK TO GET ROTATION RIGHT!!
-                parent_bone_matrix = Matrix(((0,1,0,0),(-1,0,0,0),(0,0,1,0),(0,0,0,1)))#armature.rotation_euler.to_matrix().to_4x4()*Matrix(((0,1,0,0),(-1,0,0,0),(0,0,1,0),(0,0,0,1)))#.identity()#armature.matrix_world
-        
-        #if not frame:
-        #    print (action, frame)
-        #    return Matrix()
-        
-        if not bone or not armature or not action:
-                return Matrix()*parent_bone_matrix
-                
-        fcurves = action.fcurves
-        if not fcurves:
-                return Matrix().identity()*parent_bone_matrix
-        scale = eval_fcurves(fcurves, bone, "scale", frame)
-        location = eval_fcurves(fcurves, bone, "location", frame)
-        rotation = eval_fcurves(fcurves,bone, "rotation_quaternion", frame)
-        return rotation*parent_bone_matrix*location*scale
+def float_to_ushort(val):
+    if val >= 0.999999999:
+        return 2**16-1
+    if val <= 0.0:
+        return 0
+    return int(floor(val * (2**16-1)))
 
+def twos_cmpl(val):
+    if val < 0:
+        return 2**16 + val
+    return val
 
-def eval_fcurves (fcurves, bone, action, frame):
-        data = list()
-        for curves in fcurves:
-                if bone in curves.data_path.split("\"") and action in curves.data_path.split("."):
-                        data.append(curves.evaluate(frame))
-        if not data:
-                return Matrix() #no valid curve found, return identity matrix
+def float_to_short(val):
+    if val >= 0.99999999:
+        return 2**15-1
+    if val <= -0.99999999:
+        return twos_cmpl(-2**15)
+    return twos_cmpl(int(round(val * 2**15)))
+
+class Edge():
+    def __init__(self, mdl, edge):
+        self.mdl = mdl
+        self.edge = edge
+        verts_tmp = mdl.mesh.edges[edge.index].vertices
+        self.verts = [mdl.mesh.vertices[verts_tmp[0]], mdl.mesh.vertices[verts_tmp[1]]]
+        self.faces = [None, None]
+        self.awing = [None, None]
+        self.bwing = [None, None]
+
+    def add_face(self, face):
+        ekeys = face.edge_keys
+        found = 0
+        for i in range(0, len(ekeys)):
+
+            if self.verts[0].index in ekeys[i] and self.verts[1].index in ekeys[i]:
+
+                found += 1
+
+                if self.verts[0].index in ekeys[i-1]: #left face
+                    self.faces[0] = face
+                    self.awing[0] = self.mdl.edgeDict[ekeys[i-1]]
+                    self.bwing[1] = self.mdl.edgeDict[ekeys[(i+1)%len(ekeys)]]
+
+                elif self.verts[1].index in ekeys[i-1]: #right face
+                    self.faces[1] = face
+                    self.awing[1] = self.mdl.edgeDict[ekeys[(i+1)%len(ekeys)]]
+                    self.bwing[0] = self.mdl.edgeDict[ekeys[i-1]]
+
+                else:
+                    raise Exception("Face is neither the left or right of the edge")
+
+        if found != 1:
+            raise Exception("Could not find adjacent faces")
             
-        dataMat = Matrix()
-        if action == "scale":
-                return Matrix(((data[0],0,0,0),(0,data[1],0,0),(0,0,data[2],0),(0,0,0,1)))
-        elif action == "location":
-                return Matrix(((1,0,0,data[0]),(0,1,0,data[1]),(0,0,1,data[2]),(0,0,0,1)))
-        elif action == "rotation_quaternion":
-                return Quaternion(data).to_matrix().to_4x4()
-        else:
-                return Matrix() #not valid action name
-                        
-                            
-# ExportHelper is a helper class, defines filename and
-# invoke() function which calls the file selector.
-from io_utils import ExportHelper
-
-from bpy.props import *
+    # done at the end, if one of the wings is None, that means the mesh is not
+    # a closed boundary surface. Fix this problem by wrapping the face around the 
+    # corner
+    def fix_wings(self):
+        if self.awing[0] == None:
+            self.awing[0] = self.edge.index
+        if self.awing[1] == None:
+            self.awing[1] = self.edge.index
+            
+        if self.bwing[0] == None:
+            self.bwing[0] = self.edge.index
+        if self.bwing[1] == None:
+            self.bwing[1] = self.edge.index
+            
 
 
-class ExportMdlFile(bpy.types.Operator, ExportHelper):
-        '''Exports a custom model file created by Brandon Surmanski'''
-        bl_idname = "export.mdl" # this is important since its how bpy.ops.export.mdl_file is constructed
-        bl_label = "Export mdl File"
+class Vert():
+    def __init__(self, mdl, vert):
+        self.mdl = mdl
+        self.incidentEdge = None
+        self.vert = vert
+
+    def add_edge(self, edge):
+        self.incidentEdge = edge
+
+class Face():
+    def __init__(self, mdl, face):
+        self.mdl = mdl
+        self.incidentEdge = None
+        self.face = face
+        tnorm = mdl.tmat * face.normal
+        self.normal = [float_to_short(normi) for normi in tnorm]
         
-        # ExportHelper mixin class uses this
-        filename_ext = ".mdl"
+        if mdl.mesh.uv_textures.active != None:
+            self.uvs = [tuple(mdl.mesh.uv_textures.active.data[face.index].uv[i]) for i in range(0,3)]
+            self.uvs = list([mdl.addUV(face.vertices[i], self.uvs[i]) for i in range(0,3)]) 
+        else:
+            self.uvs = list([0] * 3)
+            
+    def add_edge(self, edge):
+        self.incidentEdge = edge
+       
 
-        filter_glob = StringProperty(default="*.mdl", options={'HIDDEN'})
+class MDL(bpy.types.Operator, ExportHelper):
+    '''Exports a custom model file create by Brandon Surmanski'''
+    bl_idname = "export.mdl2"
+    bl_label = "Export MDL2 File"
+    filename_ext = ".mdl"
 
-     #List of operator properties, the attributes will be assigned
-     #to the class instance from the operator settings before calling.
-     #use_setting = BoolProperty(name="Example Boolean", description="Example Tooltip", default= True)
+    def __init__(self):
+        if not bpy.context.object.type == "MESH":
+            raise Exception("Mesh must be selected, " + bpy.context.object.type + " was given")
+            
+        self.tmat = Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0)))
 
-     # type = bpy.props.EnumProperty(items=(('OPT_A', "First Option", "Description one"), ('OPT_B', "Second Option", "Description two.")),
-     #                                      name="Example Enum",
-     #                                   description="Choose between two items",
-     #                                  default='OPT_A')
+        self.mesh = bpy.context.object.data
+        self.verts = []
+        self.faces = []
+        self.edges = []
+        self.uvlist = list()
+        self.ntexco = 0
 
-        @classmethod
-        def poll(cls, context):
-                #return context.active_object != None
-                return True #bpy.data.len > 0
+        self.edgeDict = dict()
+        for edge in self.mesh.edges:
+            self.edgeDict[edge.key] = edge.index
 
-        def execute(self, context):
-                return write_mdl_data(context, self.filepath)
+        extend(self.edges, len(self.edgeDict))
+
+        # create edge relations dependant on faces
+        for face in self.mesh.faces:
+            self.faces.append(Face(self, face))
+            for edge_key in face.edge_keys:
+                i = self.edgeDict[edge_key]
+                if self.edges[i] is None:
+                    self.edges[i] = Edge(self, self.mesh.edges[i])
+                self.edges[i].add_face(face)
+
+        self.verts.extend([Vert(self, vert) for vert in self.mesh.vertices])
+        
+        for edge in self.edges:
+            vindex = edge.verts[0].index
+            self.verts[vindex].add_edge(edge)
+
+            vindex = edge.verts[1].index
+            self.verts[vindex].add_edge(edge)
+
+            if edge.faces[0] == None:
+                edge.faces[0] = edge.faces[1]
+            findex = edge.faces[0].index
+            self.faces[findex].add_edge(edge)
+
+            if edge.faces[1] == None:
+                edge.faces[1] = edge.faces[0]
+            findex = edge.faces[1].index
+            self.faces[findex].add_edge(edge)
+
+        self.format = MDL_FMT
+        self.ofile = 0
+        
+
+    def addUV(self, v_id, uv):
+        entry = tuple((v_id, float_to_ushort(uv[0]), float_to_ushort(uv[1])))
+        if(entry not in self.uvlist):
+            self.uvlist.append(entry)
+        return self.uvlist.index(entry)
+
+    def write_header(self):
+        hfmt = "3sBIIII" + 'x' * 12
+        header = struct.pack(hfmt, b"MDL", 2,
+                    len(self.verts), len(self.edges), len(self.faces), len(self.uvlist))
+        self.ofile.write(header)
+
+    def write_verts(self):
+        vfmt = "HHfff"
+        for vert in self.verts:
+            co = self.tmat * vert.vert.co 
+            vbits = struct.pack(vfmt, vert.incidentEdge.edge.index,
+                                vert.incidentEdge.faces[0].index,
+                                co[0], co[1], co[2])
+            self.ofile.write(vbits)            
+
+    def write_edges(self):
+        efmt = "HHHHHHHH"
+        for edge in self.edges:
+            edge.fix_wings()
+            ebits = struct.pack(efmt, edge.verts[0].index, edge.verts[1].index,
+                    edge.faces[0].index, edge.faces[1].index, 
+                    edge.awing[0], edge.awing[1], edge.bwing[0], edge.bwing[1])
+            self.ofile.write(ebits)
+
+    def write_faces(self):
+        ffmt = "H" + "H" * 3 + "H" * 3 + "xx"
+
+        for face in self.faces:
+            normal = face.normal
+            fbits = struct.pack(ffmt, face.incidentEdge.edge.index,
+                    face.uvs[0],face.uvs[1],face.uvs[2],
+                    normal[0], normal[1], normal[2])
+            self.ofile.write(fbits)
+            
+    
+    def write_uvs(self):
+        uvfmt = "HHHxx"
+        for uv in self.uvlist:
+            uvbits = struct.pack(uvfmt, uv[0], uv[1], uv[2])
+            self.ofile.write(uvbits)
 
 
-# Only needed if you want to add into a dynamic menu
+    def write(self):
+        print("Writting header...\n")
+        self.write_header()
+        print("Writting " + str(len(self.verts)) + " verticies\n")
+        self.write_verts()
+        print("Writting " + str(len(self.edges)) + " edges\n")
+        self.write_edges()
+        print("Writting " + str(len(self.faces)) + " faces\n")
+        self.write_faces()
+        print("Writting " + str(len(self.uvlist)) + " uvs\n")
+        self.write_uvs()
+
+    
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def execute(self, context):
+        self.ofile = open(self.filepath, "wb")
+        self.write()
+        self.ofile.close()
+        return {"FINISHED"}
+
+
+
+
 def menu_func_export(self, context):
-        self.layout.operator(ExportMdlFile.bl_idname, text="Brandon Surmanski Custom Model (.mdl)")
+    self.layout.operator(MDL.bl_idname, text="Custom Model (.mdl)")
 
-bpy.types.INFO_MT_file_export.append(menu_func_export)
 
 def register():
-    bpy.utils.register_class(ExportMdlFile)
+    bpy.utils.register_class(MDL)
     bpy.types.INFO_MT_file_export.append(menu_func_export)
-    
+
+def unregister():
+    bpy.utils.unregister_class(MDL)
+    bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
 if __name__ == "__main__":
-        register()
-        bpy.ops.export.mdl('INVOKE_DEFAULT')
+    register()
+    bpy.ops.export.mdl2('INVOKE_DEFAULT')
