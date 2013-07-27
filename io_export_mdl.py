@@ -3,6 +3,7 @@ from bpy_extras.io_utils import ExportHelper
 from mathutils import *
 from math import *
 import struct
+from blender_sharelib import *
 
 """
 MDL file format export
@@ -13,13 +14,13 @@ HEADER:
     4 byte: number of verts
     4 bytea: number of faces
     1 byte: number of bones
-    16 byte: name
     3 byte: padding
+    16 byte: name
     32
 
 VERT:
     12 byte: position (3 * 4 byte float)
-    6 byte: normal (3 * 2 byte signed short) (normalized from -32768 to 32767)
+    6 byte: normal (3 * 2 byte signed short) (normalized from -32768 to 32767) #TODO implicit Z
     4 byte: uv coordinate (2 * 2 byte) (normalized from 0 to 65535)
     2 byte: material
     1 byte: boneID 1
@@ -38,33 +39,6 @@ MDL:
     VERTS,
     FACES
 """
-
-def float_to_ushort(val):
-    if val >= 1.0:
-        return 2**16-1
-    if val <= 0.0:
-        return 0
-    return int(floor(val * (2**16-1)))
-
-def float_to_short(val):
-    if val >= 1.0:
-        return 2**15-1
-    if val <= -1.0:
-        return -(2**15)+1
-    return int(round(val * (2**15-1)))
-
-def float_to_ubyte(val):
-    if val >= 1.0:
-        return 2**8-1
-    if val <= 0.0:
-        return 0
-    return int(round(val * (2**8-1)))
-
-def vec2_to_uhvec2(val):
-    return tuple((float_to_ushort(val[0]), float_to_ushort(val[1])))
-
-def vec3_to_hvec3(val):
-    return tuple((float_to_short(val[0]), float_to_short(val[1]), float_to_short(val[2])))
 
 def uv_entry_tuple(mesh, facei, uvi):
     face = mesh.tessfaces[facei]
@@ -144,17 +118,18 @@ def get_bone_list(obj):
             blist.append([bone.name, i, pid, bone])
     return blist
 
-def write_mdl_header(file, obj, vlist, flist, blist):
-    hfmt = "3sBIIB15sxxxx"
+def write_mdl_header(buf, obj, vlist, flist, blist):
+    hfmt = "3sBIIBxxx16s"
 
     header = struct.pack(hfmt, b"MDL", 4,
                 len(vlist),
                 len(flist),
                 len(blist),#number of bones
                 bytes(obj.data.name, "UTF-8"))
-    file.write(header)
+    assert(len(header) == 32)
+    buf.append(header)
 
-def write_mdl_verts(file, obj, vlist, blist):
+def write_mdl_verts(buf, obj, vlist, blist):
     tmat = Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0))) #turns verts right side up (+y)
     VERTID = 0; UV1 = 1; UV2 = 2
     BONEID1 = 0; BONEID2 = 1; BONEW1 = 2; BONEW2 = 3
@@ -171,19 +146,16 @@ def write_mdl_verts(file, obj, vlist, blist):
                             0, #material ID
                             bones[BONEID1], bones[BONEID2], #bone IDs
                             bones[BONEW1], bones[BONEW2]) #bone weights
-        file.write(vbits)
+        buf.append(vbits)
 
-def write_mdl_faces(file, mesh, flist):
+def write_mdl_faces(buf, mesh, flist):
         ffmt = 'HHH'
         for face in flist:
             fbits = struct.pack(ffmt, face[0], face[1], face[2])
-            file.write(fbits)
+            buf.append(fbits)
 
-def write_mdl_mesh(context, filepath, settings):
-    if not context.object.type == "MESH":
-            raise Exception("Mesh must be selected, " + context.object.type + " was given")
-
-    obj = context.object
+def write_mdl_mesh(obj, settings):
+    buf = []
     mesh = obj.data
     mesh.update(calc_tessface=True)
     if not is_trimesh(mesh):
@@ -193,12 +165,11 @@ def write_mdl_mesh(context, filepath, settings):
     flist = get_face_list(mesh, vlist) #modifies vlist (i know... bad)
     blist = get_bone_list(obj)
 
-    f = open(filepath, 'wb')
-    write_mdl_header(f, obj, vlist, flist, blist)
-    write_mdl_verts(f, obj, vlist, blist)
-    write_mdl_faces(f, mesh, flist)
-    f.close()
-    return {'FINISHED'}
+    write_mdl_header(buf, obj, vlist, flist, blist)
+    write_mdl_verts(buf, obj, vlist, blist)
+    write_mdl_faces(buf, mesh, flist)
+    return b''.join(buf)
+    
 
 def is_trimesh(mesh):
     ret = True
@@ -246,7 +217,18 @@ class MdlExport(Operator, ExportHelper):
     """
 
     def execute(self, context):
-        return write_mdl_mesh(context, self.filepath, None)
+        if not context.object.type == "MESH":
+            raise Exception("Mesh must be selected, " + context.object.type + " was given")
+
+        obj = context.object
+
+        
+        f = open(self.filepath, 'wb')
+        obuf = write_mdl_mesh(obj, None)
+        f.write(obuf)
+        f.close()
+        
+        return {'FINISHED'}
 
 
 # Only needed if you want to add into a dynamic menu
