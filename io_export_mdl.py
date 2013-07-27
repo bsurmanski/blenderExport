@@ -4,233 +4,268 @@ from mathutils import *
 from math import *
 import struct
 
-bl_info={
-        "name": "Brandon Surmanski MDL Format",
-        "author": "Brandon Surmanski",
-        "blender": (2,6,5),
-        "api": 35622,
-        "location": "File > Export",
-        "description":("Export MDL mesh"),
-        "warning":"",
-        "wiki_url":"",
-        "tracker_url":"",
-        "support": 'NONE',
-        "category": "Export"
-        }
-        
-MDL_FMT = 2
-
 """
+MDL file format export
+
 HEADER:
     3 byte: magic number (MDL)
     1 byte: version number (2)
     4 byte: number of verts
-    4 byte: number of faces
-    20 byte: padding
-    
+    4 bytea: number of faces
+    1 byte: number of bones
+    16 byte: name
+    3 byte: padding
+    32
+
 VERT:
     12 byte: position (3 * 4 byte float)
-    12 byte: normal (3 * 4 byte float)
+    6 byte: normal (3 * 2 byte signed short) (normalized from -32768 to 32767)
     4 byte: uv coordinate (2 * 2 byte) (normalized from 0 to 65535)
     2 byte: material
-    2 byte: padding
-    
+    1 byte: boneID 1
+    1 byte: boneID 2
+    1 byte: bone weight 1
+    1 byte: bone weight 2
+    4 byte: padding         #TODO lighting properties
+    32
+
 FACE:
     6 byte: vertex indices
-    
-    
+    6
+
 MDL:
     HEADER,
     VERTS,
     FACES
 """
 
-def extend(lst, sz):
-    for i in range(0, sz):
-        lst += [None]
-        
 def float_to_ushort(val):
-    if val >= 0.999999999:
+    if val >= 1.0:
         return 2**16-1
     if val <= 0.0:
         return 0
     return int(floor(val * (2**16-1)))
 
-def twos_cmpl(val):
-    if val < 0:
-        return 2**16 + val
-    return val
-
 def float_to_short(val):
-    if val >= 0.99999999:
+    if val >= 1.0:
         return 2**15-1
-    if val <= -0.99999999:
-        return twos_cmpl(-2**15)
-    return twos_cmpl(int(round(val * 2**15)))
+    if val <= -1.0:
+        return -(2**15)+1
+    return int(round(val * (2**15-1)))
 
-class Vert():
-    def __init__(self, mdl, vert):
-        self.mdl = mdl
-        self.vert = vert
+def float_to_ubyte(val):
+    if val >= 1.0:
+        return 2**8-1
+    if val <= 0.0:
+        return 0
+    return int(round(val * (2**8-1)))
 
-class Face():
-    def __init__(self, mdl, face):
-        self.mdl = mdl
-        self.face = face
-        tnorm = mdl.tmat * face.normal
-        self.normal = [float_to_short(normi) for normi in tnorm]
-        
-        if mdl.mesh.uv_textures.active != None:
-            self.uvs = [tuple(mdl.mesh.uv_textures.active.data[face.index].uv[i]) for i in range(0,3)]
-            self.uvs = list([mdl.addUV(face.vertices[i], self.uvs[i]) for i in range(0,3)]) 
-        else:
-            self.uvs = list([0] * 3)
-          
-       
+def vec2_to_uhvec2(val):
+    return tuple((float_to_ushort(val[0]), float_to_ushort(val[1])))
 
-class MDL(bpy.types.Operator, ExportHelper):
-    '''Exports a custom model file create by Brandon Surmanski'''
-    bl_idname = "export.mdl2"
-    bl_label = "Export MDL2 File"
+def vec3_to_hvec3(val):
+    return tuple((float_to_short(val[0]), float_to_short(val[1]), float_to_short(val[2])))
+
+def uv_entry_tuple(mesh, facei, uvi):
+    face = mesh.tessfaces[facei]
+    uv_raw = (0.0, 0.0)
+    if mesh.tessface_uv_textures.active:
+        uvface = mesh.tessface_uv_textures.active.data[facei]
+        uv_raw = (uvface.uv_raw[uvi * 2], uvface.uv_raw[uvi * 2 + 1])
+    uv = vec2_to_uhvec2(uv_raw)
+    entry = (face.vertices[uvi], uv[0], uv[1])
+    return entry
+
+def vert_list_entry_id(mesh, vert_list, entry):
+    if(entry not in vert_list):
+        vert_list.append(entry)
+    return vert_list.index(entry)
+
+def get_face_list(mesh, vert_list):
+    lst = list()
+    for i in range(len(mesh.tessfaces)):
+        faceverts = list()
+        for j in range(3):
+            entry = uv_entry_tuple(mesh, i, j)
+            faceverts.append(vert_list_entry_id(mesh, vert_list, entry))
+        lst.append(faceverts)
+    return lst
+
+def bone_weight_normalize(bones):
+    BONEW1 = 2; BONEW2 = 3
+    b_sum = bones[BONEW1] + bones[BONEW2]
+    if b_sum > 0:
+        bones[BONEW1] = float_to_ubyte(bones[BONEW1] / b_sum)
+        bones[BONEW2] = float_to_ubyte(bones[BONEW2] / b_sum)
+    else:
+        bones[BONEW1] = 0
+        bones[BONEW2] = 0
+    return bones
+
+def bone_id_of_group(obj, groupid, blist):
+    BONE = 3
+    nm = obj.vertex_groups[groupid].name
+    for i in range(0, len(blist)):
+        if(nm == blist[i][BONE].name):
+            print(nm + " is group " + str(i));
+            return i
+    return None
+
+def vert_get_bones(obj, vert, blist):
+    boneid = [255, 255]
+    bonew = [0.0, 0.0]
+    for group in vert.groups:
+        g_boneid = bone_id_of_group(obj, group.group, blist)
+        if g_boneid != None:
+            if group.weight > bonew[0]:
+                bonew[1] = bonew[0]
+                boneid[1] = boneid[0]
+                bonew[0] = group.weight
+                boneid[0] = g_boneid
+            elif group.weight > bonew[1]:
+                bonew[1] = group.weight
+                boneid[1] = g_boneid
+    return bone_weight_normalize([boneid[0], boneid[1], bonew[0], bonew[1]])
+
+def find_bone_parentid(arm, bone):
+    if(bone.parent):
+        for i in range(len(arm.data.bones)):
+            if(arm.data.bones[i] == bone.parent):
+                return i
+    return 255
+
+def get_bone_list(obj):
+    armature = obj.find_armature()
+    blist = []
+    if(armature):
+        for i in range(0, len(armature.data.bones)):
+            bone = armature.data.bones[i]
+            pid = find_bone_parentid(armature, bone)
+            blist.append([bone.name, i, pid, bone])
+    return blist
+
+def write_mdl_header(file, obj, vlist, flist, blist):
+    hfmt = "3sBIIB15sxxxx"
+
+    header = struct.pack(hfmt, b"MDL", 4,
+                len(vlist),
+                len(flist),
+                len(blist),#number of bones
+                bytes(obj.data.name, "UTF-8"))
+    file.write(header)
+
+def write_mdl_verts(file, obj, vlist, blist):
+    tmat = Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0))) #turns verts right side up (+y)
+    VERTID = 0; UV1 = 1; UV2 = 2
+    BONEID1 = 0; BONEID2 = 1; BONEW1 = 2; BONEW2 = 3
+    vfmt = "fffhhhHHHBBBBxxxx"
+    for vert in vlist:
+        co = tmat * obj.data.vertices[vert[VERTID]].co
+        norm = vec3_to_hvec3(tmat * obj.data.vertices[vert[VERTID]].normal)
+        uv = tuple((vert[UV1], vert[UV2]))
+        bones = vert_get_bones(obj, obj.data.vertices[vert[VERTID]], blist)
+
+        vbits = struct.pack(vfmt, co[0], co[1], co[2],
+                            norm[0], norm[1], norm[2],
+                            uv[0], uv[1],
+                            0, #material ID
+                            bones[BONEID1], bones[BONEID2], #bone IDs
+                            bones[BONEW1], bones[BONEW2]) #bone weights
+        file.write(vbits)
+
+def write_mdl_faces(file, mesh, flist):
+        ffmt = 'HHH'
+        for face in flist:
+            fbits = struct.pack(ffmt, face[0], face[1], face[2])
+            file.write(fbits)
+
+def write_mdl_mesh(context, filepath, settings):
+    if not context.object.type == "MESH":
+            raise Exception("Mesh must be selected, " + context.object.type + " was given")
+
+    obj = context.object
+    mesh = obj.data
+    mesh.update(calc_tessface=True)
+    if not is_trimesh(mesh):
+        raise Exception ("Mesh is not triangulated")
+
+    vlist = list()
+    flist = get_face_list(mesh, vlist) #modifies vlist (i know... bad)
+    blist = get_bone_list(obj)
+
+    f = open(filepath, 'wb')
+    write_mdl_header(f, obj, vlist, flist, blist)
+    write_mdl_verts(f, obj, vlist, blist)
+    write_mdl_faces(f, mesh, flist)
+    f.close()
+    return {'FINISHED'}
+
+def is_trimesh(mesh):
+    ret = True
+    for face in mesh.tessfaces:
+        if len(face.vertices) > 3:
+            ret = False
+            break
+    return ret
+
+# ExportHelper is a helper class, defines filename and
+# invoke() function which calls the file selector.
+from bpy_extras.io_utils import ExportHelper
+from bpy.props import StringProperty, BoolProperty, EnumProperty
+from bpy.types import Operator
+
+class MdlExport(Operator, ExportHelper):
+    """This appears in the tooltip of the operator and in the generated docs"""
+    bl_idname = "export.mdl"  # important since its how bpy.ops.import_test.some_data is constructed
+    bl_label = "Export Custom Model"
+
+    # ExportHelper mixin class uses this
     filename_ext = ".mdl"
 
-    def __init__(self):
-        if not bpy.context.object.type == "MESH":
-            raise Exception("Mesh must be selected, " + bpy.context.object.type + " was given")
-            
-        self.tmat = Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0)))
+    filter_glob = StringProperty(
+            default="*.mdl",
+            options={'HIDDEN'},
+            )
 
-        self.mesh = bpy.context.object.data
-        self.verts = []
-        self.faces = []
-        self.edges = []
-        self.uvlist = list()
-        self.ntexco = 0
+    # List of operator properties, the attributes will be assigned
+    # to the class instance from the operator settings before calling.
+    """
+    use_setting = BoolProperty(
+           name="Example Boolean",
+            description="Example Tooltip",
+            default=True,
+            )
 
-        self.edgeDict = dict()
-        for edge in self.mesh.edges:
-            self.edgeDict[edge.key] = edge.index
-
-        extend(self.edges, len(self.edgeDict))
-
-        # create edge relations dependant on faces
-        for face in self.mesh.faces:
-            self.faces.append(Face(self, face))
-            for edge_key in face.edge_keys:
-                i = self.edgeDict[edge_key]
-                if self.edges[i] is None:
-                    self.edges[i] = Edge(self, self.mesh.edges[i])
-                self.edges[i].add_face(face)
-
-        self.verts.extend([Vert(self, vert) for vert in self.mesh.vertices])
-        
-        for edge in self.edges:
-            vindex = edge.verts[0].index
-            self.verts[vindex].add_edge(edge)
-
-            vindex = edge.verts[1].index
-            self.verts[vindex].add_edge(edge)
-
-            if edge.faces[0] == None:
-                edge.faces[0] = edge.faces[1]
-            findex = edge.faces[0].index
-            self.faces[findex].add_edge(edge)
-
-            if edge.faces[1] == None:
-                edge.faces[1] = edge.faces[0]
-            findex = edge.faces[1].index
-            self.faces[findex].add_edge(edge)
-
-        self.format = MDL_FMT
-        self.ofile = 0
-        
-
-    def addUV(self, v_id, uv):
-        entry = tuple((v_id, float_to_ushort(uv[0]), float_to_ushort(uv[1])))
-        if(entry not in self.uvlist):
-            self.uvlist.append(entry)
-        return self.uvlist.index(entry)
-
-    def write_header(self):
-        hfmt = "3sBII" + 'x' * 20
-        header = struct.pack(hfmt, b"MDL", 3,
-                    len(self.verts), len(self.faces))
-        self.ofile.write(header)
-
-    def write_verts(self):
-        vfmt = "HHfff"
-        for vert in self.verts:
-            co = self.tmat * vert.vert.co 
-            vbits = struct.pack(vfmt, vert.incidentEdge.edge.index,
-                                vert.incidentEdge.faces[0].index,
-                                co[0], co[1], co[2])
-            self.ofile.write(vbits)            
-
-    def write_edges(self):
-        efmt = "HHHHHHHH"
-        for edge in self.edges:
-            edge.fix_wings()
-            ebits = struct.pack(efmt, edge.verts[0].index, edge.verts[1].index,
-                    edge.faces[0].index, edge.faces[1].index, 
-                    edge.awing[0], edge.awing[1], edge.bwing[0], edge.bwing[1])
-            self.ofile.write(ebits)
-
-    def write_faces(self):
-        ffmt = "H" + "H" * 3 + "H" * 3 + "xx"
-
-        for face in self.faces:
-            normal = face.normal
-            fbits = struct.pack(ffmt, face.incidentEdge.edge.index,
-                    face.uvs[0],face.uvs[1],face.uvs[2],
-                    normal[0], normal[1], normal[2])
-            self.ofile.write(fbits)
-            
-    
-    def write_uvs(self):
-        uvfmt = "HHHxx"
-        for uv in self.uvlist:
-            uvbits = struct.pack(uvfmt, uv[0], uv[1], uv[2])
-            self.ofile.write(uvbits)
-
-
-    def write(self):
-        print("Writting header...\n")
-        self.write_header()
-        print("Writting " + str(len(self.verts)) + " verticies\n")
-        self.write_verts()
-        print("Writting " + str(len(self.edges)) + " edges\n")
-        self.write_edges()
-        print("Writting " + str(len(self.faces)) + " faces\n")
-        self.write_faces()
-        print("Writting " + str(len(self.uvlist)) + " uvs\n")
-        self.write_uvs()
-
-    
-    @classmethod
-    def poll(cls, context):
-        return True
+    type = EnumProperty(
+            name="Example Enum",
+            description="Choose between two items",
+            items=(('OPT_A', "First Option", "Description one"),
+                   ('OPT_B', "Second Option", "Description two")),
+            default='OPT_A',
+            )
+    """
 
     def execute(self, context):
-        self.ofile = open(self.filepath, "wb")
-        self.write()
-        self.ofile.close()
-        return {"FINISHED"}
+        return write_mdl_mesh(context, self.filepath, None)
 
 
-
-
+# Only needed if you want to add into a dynamic menu
 def menu_func_export(self, context):
-    self.layout.operator(MDL.bl_idname, text="Custom Model (.mdl)")
+    self.layout.operator(MdlExport.bl_idname, text="Custom Model (.mdl)")
 
 
 def register():
-    bpy.utils.register_class(MDL)
+    bpy.utils.register_class(MdlExport)
     bpy.types.INFO_MT_file_export.append(menu_func_export)
 
+
 def unregister():
-    bpy.utils.unregister_class(MDL)
+    bpy.utils.unregister_class(MdlExport)
     bpy.types.INFO_MT_file_export.remove(menu_func_export)
+
 
 if __name__ == "__main__":
     register()
-    #bpy.ops.export.mdl2('INVOKE_DEFAULT')
+
+    # test call
+    bpy.ops.export.mdl('INVOKE_DEFAULT')
