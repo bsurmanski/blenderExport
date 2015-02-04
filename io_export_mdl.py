@@ -1,7 +1,7 @@
 bl_info = {
     "name":         "MDL File Format",
     "author":       "Brandon Surmanski",
-    "blender":      (2,7,2),
+    "blender":      (2,7,3),
     "version":      (0,0,1),
     "location":     "File > Import-Export",
     "description":  "Export custom MDL format",
@@ -201,7 +201,11 @@ def write_mdl_header(buf, obj, vlist, flist, blist):
     buf.append(header)
 
 def write_mdl_verts(buf, obj, vlist, blist):
-    tmat = Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0))) #turns verts right side up (+y)
+    rows = [[0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [-1, 0, 0, 0],
+            [0, 0, 0, 1]]
+    tmat = Matrix(rows)#Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0))) #turns verts right side up (+y)
     VERTID = 0; UV1 = 1; UV2 = 2
     BONEID1 = 0; BONEID2 = 1; BONEW1 = 2; BONEW2 = 3
     vfmt = "fffhhhHHHBBBBxxxx"
