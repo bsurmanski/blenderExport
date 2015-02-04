@@ -1,0 +1,37 @@
+"""
+LMP file format export
+Requirements:
+    spec lamp type (point, sun, spot, hemi, area, ambient)
+    spec lamp color (spec, diffuse)
+    spec lamp
+
+    Point/Spot:
+        spec lamp falloff (? maybe)
+
+HEADER:
+    3 byte: magic number (LMP)
+    1 byte: version number (1)
+    1 byte: lamp type (0x00=ambient, 0x01=sun, 0x02=point, 0x04=spot, 0x08=hemi, 0x10=area)
+    3 byte: diffuse color (RGB)
+    8
+
+LMP:
+    HEADER,
+    PACK,
+    ENT
+"""
+
+"""
+CAM file format export
+Requirements:
+
+
+HEADER:
+    3 byte: magic number (CAM)
+    1 byte: version number (1)
+    4 byte: padding
+    8
+
+CAM:
+    HEADER,
+"""
