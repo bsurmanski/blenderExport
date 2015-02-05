@@ -2,7 +2,7 @@ bl_info = {
     "name":         "SCN File Format",
     "author":       "Brandon Surmanski",
     "blender":      (2,7,3),
-    "version":      (0,0,1),
+    "version":      (0,0,2),
     "location":     "File > Import-Export",
     "description":  "Export custom SCN format",
     "category":     "Import-Export"
@@ -22,7 +22,7 @@ Requirements:
 
 HEADER:
     3 byte: magic number (SCN)
-    1 byte: version number (1)
+    1 byte: version number (2)
     2 byte: # entities
     10 byte: padding
     16 byte: name
@@ -30,14 +30,11 @@ HEADER:
 
 ENT:
     2 byte: parent id (zero indexed, if top bit is '1', no parent)
-    2 byte: padding
-    12 byte: position (3xfloat)  
-    12 byte: scale (3xfloat)
-    16 byte: rotation (4xfloat quaternion (normalized))
-	4 byte: padding	
-	16 byte: name	
-	64
-   	
+    6 byte: padding
+    64 byte: mat4 transformation matrix (row major, 4x4 float)
+    16 byte: name (trimmed blender object name)
+    88
+
 
 SCN:
     HEADER,
@@ -54,12 +51,18 @@ def write_scn_header(buf, scene):
     buf.append(header)
 
 def write_scn_ent(buf, obj):
-    fmt = "Hxx3f3f4f4x16s"
+    fmt = "H6x16f16s"
+    tmat = Matrix([[ 0, 1, 0, 0],
+                   [ 0, 0, 1, 0],
+                   [-1, 0, 0, 0],
+                   [ 0, 0, 0, 1]])
+    mat = tmat * obj.matrix_world
     eheader = struct.pack(fmt,
                           0,
-                          obj.location[1], obj.location[2], -obj.location[0],
-                          obj.scale[1], obj.scale[2], obj.scale[0],
-                          obj.rotation_quaternion[1], obj.rotation_quaternion[2], obj.rotation_quaternion[3], obj.rotation_quaternion[0],
+                          mat[0][0], mat[0][1], mat[0][2], mat[0][3],
+                          mat[1][0], mat[1][1], mat[1][2], mat[1][3],
+                          mat[2][0], mat[2][1], mat[2][2], mat[2][3],
+                          mat[3][0], mat[3][1], mat[3][2], mat[3][3],
                           bytes(obj.name.split('.')[0], "UTF-8")) # splitting name to remove .001 qualifier
     buf.append(eheader)
 
@@ -76,7 +79,7 @@ def write_scn_ents(buf, scene):
 
 def write_scn_data(buf, scene):
     write_scn_ents(buf, scene)
-    
+
 def write_scn_scene(context, settings):
     buf = []
     write_scn_header(buf, context.scene)
