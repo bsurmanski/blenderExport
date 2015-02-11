@@ -201,9 +201,9 @@ def write_mdl_header(buf, obj, vlist, flist, blist):
     buf.append(header)
 
 def write_mdl_verts(buf, obj, vlist, blist):
-    rows = [[0, 1, 0, 0],
+    rows = [[1, 0, 0, 0],
             [0, 0, 1, 0],
-            [-1, 0, 0, 0],
+            [0,-1, 0, 0],
             [0, 0, 0, 1]]
     tmat = Matrix(rows)#Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0))) #turns verts right side up (+y)
     VERTID = 0; UV1 = 1; UV2 = 2

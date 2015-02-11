@@ -31,9 +31,11 @@ HEADER:
 ENT:
     2 byte: parent id (zero indexed, if top bit is '1', no parent)
     6 byte: padding
-    64 byte: mat4 transformation matrix (row major, 4x4 float)
+    12 byte: position
+    12 byte: scale
+    16 byte: quaternion rotation
     16 byte: name (trimmed blender object name)
-    88
+    64
 
 
 SCN:
@@ -51,18 +53,18 @@ def write_scn_header(buf, scene):
     buf.append(header)
 
 def write_scn_ent(buf, obj):
-    fmt = "H6x16f16s"
-    tmat = Matrix([[ 0, 1, 0, 0],
+    fmt = "H6x3f3f4f16s"
+    tmat = Matrix([[ 1, 0, 0, 0],
                    [ 0, 0, 1, 0],
-                   [-1, 0, 0, 0],
+                   [ 0,-1, 0, 0],
                    [ 0, 0, 0, 1]])
-    mat = tmat * obj.matrix_world
+    pos = tmat * obj.location
+    rot = obj.rotation_euler.to_quaternion() #needs to be rotated; done below
     eheader = struct.pack(fmt,
                           0,
-                          mat[0][0], mat[0][1], mat[0][2], mat[0][3],
-                          mat[1][0], mat[1][1], mat[1][2], mat[1][3],
-                          mat[2][0], mat[2][1], mat[2][2], mat[2][3],
-                          mat[3][0], mat[3][1], mat[3][2], mat[3][3],
+                          pos.x, pos.y, pos.z,
+                          obj.scale[1], obj.scale[2], obj.scale[0],
+                          rot.x, rot.z, -rot.y, rot.w,
                           bytes(obj.name.split('.')[0], "UTF-8")) # splitting name to remove .001 qualifier
     buf.append(eheader)
 
