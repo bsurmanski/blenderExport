@@ -21,7 +21,7 @@ HEADER:
     3 byte: magic number (MDL)
     1 byte: version number (2)
     4 byte: number of verts
-    4 bytea: number of faces
+    4 byte: number of faces
     1 byte: number of bones
     3 byte: padding
     16 byte: name

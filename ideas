@@ -35,3 +35,60 @@ HEADER:
 CAM:
     HEADER,
 """
+
+"""
+MDL fie format
+
+HEADER:
+    3 byte: magic number (MDL)
+    1 byte: version number (1)
+    2 byte: number of meshes
+    2 byte: number of collision volumes
+    8 byte: padding
+    16 byte: name
+    32
+
+MSH:
+    as MSH format
+
+PHY:
+    as PHY format
+"""
+
+"""
+PHY file format
+
+All transformations are relative to base object
+
+HEADER:
+    3 byte: magic number (PHY)
+    1 byte: version (1)
+    2 byte: number of collision spheres
+    2 byte: number of collision capsule
+    2 byte: number of collision boxes
+    4 byte: float, bounding sphere radius 
+    2 byte: padding
+    16 byte: name
+    32
+
+SPHERE:
+    12 byte: position (3 * 4 byte float)
+    4 byte: radius (float)
+    16
+
+CAPSULE:
+    12 byte: position (3 * 4 byte float)
+    4 byte: radius (float)
+    4 byte: height (float)
+    12 byte: rotation (3 * float, quaternion x,y,z; implicit w)
+    32
+
+BOX:
+    12 byte: position (3 * 4 byte float)
+    12 byte: rotation (3 * float, quaternion x,y,z; implicit w)
+    12 byte: (3 * 4 byte float; half widths, x y z)
+    36
+
+    
+    
+"""
