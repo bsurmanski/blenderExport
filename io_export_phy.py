@@ -20,7 +20,7 @@ HEADER:
     2 byte: number of collision capsule
     2 byte: number of collision boxes
     2 byte: padding
-    4 byte: float, bounding sphere radius (implicitly centered at (0,0,0))
+    4 byte: float, bounding sphere radius (implicitly centered relative to base object location)
     16 byte: name
     32
 
@@ -38,8 +38,8 @@ CAPSULE:
 
 BOX:
     12 byte: position (3 * 4 byte float)
+    12 byte: (3 * 4 byte float; dimensions, x y z)
     12 byte: rotation (3 * float, quaternion x,y,z; implicit w)
-    12 byte: (3 * 4 byte float; half widths, x y z)
     36
 """
 
@@ -99,8 +99,8 @@ class PhyExport(Operator, ExportHelper):
         fmt = "3f3f3f"
         for box in self.boxes:
             loc, dim, rot = box # unpack box tuple
-            pak = struct.pack(fmt, loc[0], -loc[2], loc[1],
-                    dim[1], dim[2], dim[0],
+            pak = struct.pack(fmt, loc[0], loc[2], -loc[1],
+                    dim[0], dim[2], dim[1],
                     rot.x, rot.z, -rot.y)
             f.write(pak)
 
@@ -119,6 +119,22 @@ class PhyExport(Operator, ExportHelper):
             elif childName == 'box':
                 self.boxes.append([relativeLocation, child.dimensions, child.rotation_euler.to_quaternion()])
                 self.boundingRadius = max(relativeLocation.length + child.dimensions.length, self.boundingRadius)
+        if len(self.spheres) == 0 and len(self.capsules) == 0 and len(self.boxes) == 0:
+            loc = Vector()
+            dim = Vector()
+            # get location and dimension of bounding box
+            for v in obj.bound_box:
+                vert = Vector(v)
+                loc += vert
+                dim.x = max(dim.x, vert.x)
+                dim.y = max(dim.y, vert.y)
+                dim.z = max(dim.z, vert.z)
+            loc /= 8.0
+            dim -= loc
+            dim *= 2
+
+            self.boundingRadius = max(loc.length + dim.length, self.boundingRadius)
+            self.boxes.append([loc, dim, Quaternion([0,0,0,1])])
 
     def execute(self, context):
         #if not context.object.type == 'MESH':
