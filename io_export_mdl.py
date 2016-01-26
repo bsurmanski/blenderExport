@@ -19,12 +19,12 @@ MDL file format export
 
 HEADER:
     3 byte: magic number (MDL)
-    1 byte: version number (2)
+    1 byte: version number (5)
     4 byte: number of verts
     4 byte: number of faces
+    4 byte: number of edges
     1 byte: number of bones
-    3 byte: padding
-    16 byte: name
+    15 byte: name
     32
 
 VERT:
@@ -36,18 +36,29 @@ VERT:
     1 byte: boneID 2
     1 byte: bone weight 1
     1 byte: bone weight 2
-    4 byte: padding         #TODO lighting properties
+    2 byte: incident edge id
+    2 byte: padding         #TODO lighting properties
     32
 
 FACE:
     6 byte: vertex indices
-    6
+    2 byte: edge id
+    8
+
+EDGE:
+    2 byte: vertexids
+    2 byte: faceids
+    2 byte: edgeids left and right of vertex[0]
+    2 byte: edgeids left and right of vertex[1]
+    8
 
 MDL:
     HEADER,
     VERTS,
     FACES
 """
+
+slicesUvs = True
 
 #
 # SHARELIB
@@ -100,21 +111,19 @@ def vec3_to_hvec3(val):
     return tuple((float_to_short(val[0]), float_to_short(val[1]), float_to_short(val[2])))
 
 def is_trimesh(mesh):
-    ret = True
     for face in mesh.tessfaces:
         if len(face.vertices) > 3:
-            ret = False
-            break
-    return ret
+            return False
+    return True
 
 #
 #
 #
 
-def uv_entry_tuple(mesh, facei, uvi):
+def uv_entry_tuple(mesh, facei, uvi, sliceUvs):
     face = mesh.tessfaces[facei]
     uv_raw = (0.0, 0.0)
-    if mesh.tessface_uv_textures.active:
+    if mesh.tessface_uv_textures.active and sliceUvs:
         uvface = mesh.tessface_uv_textures.active.data[facei]
         uv_raw = (uvface.uv_raw[uvi * 2], uvface.uv_raw[uvi * 2 + 1])
     uv = vec2_to_uhvec2(uv_raw)
@@ -126,12 +135,12 @@ def vert_list_entry_id(mesh, vert_list, entry):
         vert_list.append(entry)
     return vert_list.index(entry)
 
-def get_face_list(mesh, vert_list):
+def get_face_list(mesh, vert_list, sliceUvs):
     lst = list()
     for i in range(len(mesh.tessfaces)):
         faceverts = list()
         for j in range(3):
-            entry = uv_entry_tuple(mesh, i, j)
+            entry = uv_entry_tuple(mesh, i, j, sliceUvs)
             faceverts.append(vert_list_entry_id(mesh, vert_list, entry))
         lst.append(faceverts)
     return lst
@@ -190,11 +199,12 @@ def get_bone_list(obj):
     return blist
 
 def write_mdl_header(buf, obj, vlist, flist, blist):
-    hfmt = "3sBIIBxxx16s"
+    hfmt = "3sBIIIB15s"
 
-    header = struct.pack(hfmt, b"MDL", 4,
+    header = struct.pack(hfmt, b"MDL", 5,
                 len(vlist),
                 len(flist),
+                0, # number of edges (unimpl)
                 len(blist),#number of bones
                 bytes(obj.data.name, "UTF-8"))
     assert(len(header) == 32)
@@ -208,7 +218,7 @@ def write_mdl_verts(buf, obj, vlist, blist):
     tmat = Matrix(rows)#Matrix.Rotation(-pi/2.0, 3, Vector((1,0,0))) #turns verts right side up (+y)
     VERTID = 0; UV1 = 1; UV2 = 2
     BONEID1 = 0; BONEID2 = 1; BONEW1 = 2; BONEW2 = 3
-    vfmt = "fffhhhHHHBBBBxxxx"
+    vfmt = "fffhhhHHHBBBBHxx"
     for vert in vlist:
         co = tmat * obj.data.vertices[vert[VERTID]].co
         norm = vec3_to_hvec3(tmat * obj.data.vertices[vert[VERTID]].normal)
@@ -218,16 +228,20 @@ def write_mdl_verts(buf, obj, vlist, blist):
         vbits = struct.pack(vfmt, co[0], co[1], co[2],
                             norm[0], norm[1], norm[2],
                             uv[0], uv[1],
-                            0, #material ID
+                            0, #material ID (unimpl)
                             bones[BONEID1], bones[BONEID2], #bone IDs
-                            bones[BONEW1], bones[BONEW2]) #bone weights
+                            bones[BONEW1], bones[BONEW2], #bone weights
+                            0) # incident edge (unimpl)
         buf.append(vbits)
 
 def write_mdl_faces(buf, mesh, flist):
-        ffmt = 'HHH'
+        ffmt = 'HHHH'
         for face in flist:
-            fbits = struct.pack(ffmt, face[0], face[1], face[2])
+            fbits = struct.pack(ffmt, face[0], face[1], face[2], 0) # last is incident edge (unimpl)
             buf.append(fbits)
+
+def write_mdl_edges(buf, mesh, elist):
+    pass
 
 def write_mdl_mesh(obj, settings):
     buf = []
@@ -237,7 +251,7 @@ def write_mdl_mesh(obj, settings):
         raise Exception ("Mesh is not triangulated")
 
     vlist = list()
-    flist = get_face_list(mesh, vlist) #modifies vlist (i know... bad)
+    flist = get_face_list(mesh, vlist, settings['sliceUvs']) #modifies vlist (i know... bad)
     blist = get_bone_list(obj)
 
     write_mdl_header(buf, obj, vlist, flist, blist)
@@ -265,6 +279,12 @@ class MdlExport(Operator, ExportHelper):
             options={'HIDDEN'},
             )
 
+    sliceUvs = BoolProperty(
+            name="Slice UV mapping",
+            description="If true, vertices will be split so there "
+                        "is one vertex entry per unique UV", 
+            default=True,)
+
     # List of operator properties, the attributes will be assigned
     # to the class instance from the operator settings before calling.
     """
@@ -290,7 +310,7 @@ class MdlExport(Operator, ExportHelper):
         obj = context.object
 
         f = open(self.filepath, 'wb')
-        obuf = write_mdl_mesh(obj, None)
+        obuf = write_mdl_mesh(obj, {'sliceUvs': self.sliceUvs})
         f.write(obuf)
         f.close()
         return {'FINISHED'}
