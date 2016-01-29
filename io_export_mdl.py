@@ -46,11 +46,11 @@ FACE:
     8
 
 EDGE:
-    2 byte: vertexids
-    2 byte: faceids
-    2 byte: edgeids left and right of vertex[0]
-    2 byte: edgeids left and right of vertex[1]
-    8
+    4 byte: vertexids * 2
+    4 byte: faceids * 2
+    4 byte: edgeids cw and ccw of vertex[0] * 2
+    4 byte: edgeids cw and ccw of vertex[1] * 2
+    16
 
 MDL:
     HEADER,
