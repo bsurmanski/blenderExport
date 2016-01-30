@@ -193,11 +193,12 @@ class Edge(object):
         return getattr(self.bme, name)
 
 class Uv(object):
-    def __init__(self, uvx, uvy, vindex, color):
+    def __init__(self, uvx, uvy, vindex, color, material=0):
         self.uvx = float_to_ushort(uvx)
         self.uvy = float_to_ushort(uvy)
         self.vindex = vindex
         self.color = color
+        self.material = material
 
     def __eq__(self, other):
         return self.uvx == other.uvx and self.uvy == other.uvy and self.vindex == other.vindex
@@ -241,7 +242,7 @@ class Mesh(object):
                     luvx = l[self.uv_layer].uv.x
                     luvy = l[self.uv_layer].uv.y
                 color = l[self.color_layer]
-                iuv = Uv(luvx, luvy, l.vert.index, color)
+                iuv = Uv(luvx, luvy, l.vert.index, color, f.material_index)
                 if iuv not in self.uvs:
                     self.uvs[iuv] = len(self.uvs) # add uv to set, value is uv index
 
@@ -287,13 +288,20 @@ class Mesh(object):
 
     def serialize_uv(self, uv):
         v = self.bm.verts[uv.vindex]
+        rows = [[1, 0, 0, 0],
+                [0, 0, 1, 0],
+                [0,-1, 0, 0],
+                [0, 0, 0, 1]]
+        tmat = Matrix(rows)
+        co = tmat * v.co
+        normal = tmat * v.normal
         vpack = struct.pack("fffhhhHHBBBBBBBBH",
-                        v.co.x,
-                        -v.co.z, # swap z and y axis
-                        v.co.y,
-                        float_to_short(v.normal.x),
-                        float_to_short(-v.normal.z),
-                        float_to_short(v.normal.y),
+                        co.x,
+                        co.y,
+                        co.z,
+                        float_to_short(normal.x),
+                        float_to_short(normal.y),
+                        float_to_short(normal.z),
                         uv.uvx, uv.uvy, # uvs
                         float_to_ubyte(uv.color.r), 
                         float_to_ubyte(uv.color.g),
