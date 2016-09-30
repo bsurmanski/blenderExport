@@ -10,11 +10,18 @@ bl_info = {
 
 import bpy
 import bmesh
+
+# ExportHelper is a helper class, defines filename and
+# invoke() function which calls the file selector.
+from bpy_extras.io_utils import ExportHelper
+from bpy.props import StringProperty, BoolProperty, EnumProperty
+from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 from mathutils import *
 from math import *
 import struct
 import bisect
+
 
 """
 MSH file format export
@@ -103,6 +110,7 @@ def float_to_ubyte(val):
         return 0
     return int(round(val * (2**8-1)))
 
+
 class Vert(object):
     def __init__(self, bmv):
         self.bmv = bmv
@@ -134,6 +142,7 @@ class Vert(object):
         assert(len(vpack) == 32)
         return vpack
 
+    
 class Face(object):
     def __init__(self, bmf):
         self.bmf = bmf
@@ -152,6 +161,7 @@ class Face(object):
         assert(len(pack) == 8)
         return pack
 
+    
 class Edge(object):
     def __init__(self, bme):
         self.bme = bme
@@ -193,6 +203,7 @@ class Edge(object):
         assert(len(epack) == 16)
         return epack
 
+    
 class Uv(object):
     def __init__(self, uvx, uvy, vindex, color, material=0):
         self.uvx = float_to_ushort(uvx)
@@ -304,7 +315,6 @@ class Mesh(object):
         assert(len(hpack) == 32)
         return hpack
 
-import logging
 def serialize_mesh(obj, settings):
     buf = []
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -312,12 +322,6 @@ def serialize_mesh(obj, settings):
     mesh = Mesh(obj.data, settings)
     return mesh.serialize()
 
-
-# ExportHelper is a helper class, defines filename and
-# invoke() function which calls the file selector.
-from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, BoolProperty, EnumProperty
-from bpy.types import Operator
 
 class MdlExport(Operator, ExportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
