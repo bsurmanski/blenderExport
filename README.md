@@ -1,4 +1,4 @@
-#Blender Export Suite
+# Blender Export Suite
 
 A suite of export scripts for a set of custom file formats. The scripts allow for
 exporting of various data from the 'Blender' 3D modeling software.
